@@ -1,0 +1,13 @@
+[package]
+name = "solana_low_latency"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies] 
+solana-client = "^4.2.1"
+solana-keypair = "3.1.2"
+solana-pubkey = "^4.2.1"
+solana-commitment-config = "3.1.1"
+tokio = { version = "1", features = ["full"] }
+solana-hash = "4.5"
+solana-system-interface = { version = "3.2", features = ["bincode"] }
