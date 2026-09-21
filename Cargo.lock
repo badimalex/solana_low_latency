@@ -4698,6 +4698,7 @@ version = "0.1.0"
 dependencies = [
  "solana-client",
  "solana-commitment-config",
+ "solana-compute-budget-interface",
  "solana-hash",
  "solana-keypair",
  "solana-pubkey 4.2.1",
