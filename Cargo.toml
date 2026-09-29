@@ -8,7 +8,7 @@ solana-client = "=4.2.1"
 solana-keypair = "3.1.2"
 solana-pubkey = "=4.2.1"
 solana-commitment-config = "3.1.1"
-
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
 solana-hash = "4.5"

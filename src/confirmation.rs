@@ -17,6 +17,12 @@ pub trait SignatureStatusProvider: Send + Sync {
 pub struct RpcStatusProvider {
     rpc: RpcClient,
 }
+impl RpcStatusProvider {
+    pub fn new(rpc: RpcClient) -> Self {
+        Self { rpc }
+    }
+}
+
 #[allow(async_fn_in_trait)]
 impl SignatureStatusProvider for RpcStatusProvider {
     async fn get_status(&self, signature: &Signature) -> Result<ConfirmationStatus, ClientError> {
