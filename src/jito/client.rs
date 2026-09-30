@@ -8,7 +8,10 @@ use solana_message::{
 use solana_pubkey::Pubkey;
 use solana_transaction::versioned::VersionedTransaction;
 
-use crate::jito::types::InflightBundleStatus;
+use crate::jito::{
+    error::JitoError,
+    types::{BundleStatusesResponse, InflightBundleStatus},
+};
 
 pub struct JitoClient {
     client: reqwest::Client,
@@ -104,8 +107,10 @@ impl JitoClient {
     pub async fn send_transaction(
         &self,
         transaction: &VersionedTransaction,
-    ) -> Result<solana_keypair::Signature, Box<dyn std::error::Error>> {
-        let body = self.build_send_transaction_request(transaction)?;
+    ) -> Result<solana_keypair::Signature, JitoError> {
+        let body = self
+            .build_send_transaction_request(transaction)
+            .map_err(|err| JitoError::LocalValidationError(err.to_string()))?;
 
         let url = format!("{}/api/v1/transactions", self.endpoint);
 
@@ -117,36 +122,59 @@ impl JitoClient {
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
 
         let http_status = response.status();
 
         println!("HTTP status: {}", http_status);
 
-        let raw_body = response.text().await?;
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
 
         if !http_status.is_success() {
-            return Err(format!(
-                "HTTP request failed with status: {}, body: {}",
+            return Err(JitoError::HttpNetworkFailure(format!(
+                "HTTP {}: {}",
                 http_status, raw_body
-            )
-            .into());
+            )));
         }
 
-        let json_response: serde_json::Value = serde_json::from_str(&raw_body)?;
+        let json_response: serde_json::Value = serde_json::from_str(&raw_body)
+            .map_err(|err| JitoError::MalformedInvalidResponse(err.to_string()))?;
 
         if let Some(error_value) = json_response.get("error").filter(|value| !value.is_null()) {
-            return Err(format!("Jito JSON-RPC error: {}", error_value).into());
+            let code = error_value
+                .get("code")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(-1);
+            let message = error_value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown JSON-RPC error")
+                .to_string();
+
+            return Err(JitoError::JsonRpcRemoteError { code, message });
         }
 
-        let result_str = json_response
-            .get("result")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing or invalid 'result' field in Jito response")?;
+        let result_value = json_response.get("result").ok_or_else(|| {
+            JitoError::MalformedInvalidResponse("Missing result field in Jito response".to_string())
+        })?;
 
-        let signature: solana_keypair::Signature = result_str
-            .parse()
-            .map_err(|e| format!("Failed to parse transaction signature: {}", e))?;
+        let signature_str = result_value.as_str().ok_or_else(|| {
+            JitoError::MalformedInvalidResponse(
+                "Invalid result field format (expected string)".to_string(),
+            )
+        })?;
+
+        // 3. Signature не парсится
+        let signature: solana_keypair::Signature = signature_str.parse().map_err(|e| {
+            JitoError::MalformedInvalidResponse(format!(
+                "Failed to parse transaction signature: {}",
+                e
+            ))
+        })?;
 
         Ok(signature)
     }
@@ -186,27 +214,60 @@ impl JitoClient {
     pub async fn send_bundle(
         &self,
         transactions: &[VersionedTransaction],
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        let body = self.build_send_bundle_request(transactions)?;
+    ) -> Result<String, JitoError> {
+        let body = self
+            .build_send_bundle_request(transactions)
+            .map_err(|err| JitoError::LocalValidationError(err.to_string()))?;
 
         let url = format!("{}/api/v1/bundles", self.endpoint);
-        let response = self.client.post(&url).json(&body).send().await?;
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
+        let http_status = response.status();
 
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("HTTP error: status {}", status).into());
+        println!("HTTP status: {}", http_status);
+
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
+
+        if !http_status.is_success() {
+            return Err(JitoError::HttpNetworkFailure(format!(
+                "HTTP {}: {}",
+                http_status, raw_body
+            )));
         }
 
-        let json_response: serde_json::Value = response.json().await?;
+        let json_response: serde_json::Value = serde_json::from_str(&raw_body)
+            .map_err(|err| JitoError::MalformedInvalidResponse(err.to_string()))?;
 
         if let Some(error_value) = json_response.get("error").filter(|value| !value.is_null()) {
-            return Err(format!("Jito JSON-RPC error: {}", error_value).into());
+            let code = error_value
+                .get("code")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(-1);
+            let message = error_value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown JSON-RPC error")
+                .to_string();
+
+            return Err(JitoError::JsonRpcRemoteError { code, message });
         }
 
         let bundle_id = json_response
             .get("result")
             .and_then(|v| v.as_str())
-            .ok_or("Missing or invalid 'result' field in Jito response")?;
+            .ok_or_else(|| {
+                JitoError::MalformedInvalidResponse(
+                    "Missing result field in Jito response".to_string(),
+                )
+            })?;
 
         Ok(bundle_id.to_string())
     }
@@ -227,39 +288,86 @@ impl JitoClient {
     pub async fn get_inflight_bundle_status(
         &self,
         bundle_id: &str,
-    ) -> Result<InflightBundleStatus, Box<dyn std::error::Error>> {
+    ) -> Result<InflightBundleStatus, JitoError> {
         let request_body = self.build_get_inflight_bundle_status_request(bundle_id);
 
         let url = format!("{}/api/v1/getInflightBundleStatuses", self.endpoint);
-        let response = self.client.post(&url).json(&request_body).send().await?;
+        let response = self
+            .client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
 
-        let response = response.error_for_status()?;
+        let http_status = response.status();
 
-        let response_text = response.text().await?;
+        println!("HTTP status: {}", http_status);
 
-        let json: serde_json::Value = serde_json::from_str(&response_text)?;
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
 
-        if let Some(error_value) = json.get("error").filter(|value| !value.is_null()) {
-            return Err(format!("Jito JSON-RPC error: {}", error_value).into());
+        if !http_status.is_success() {
+            return Err(JitoError::HttpNetworkFailure(format!(
+                "HTTP {}: {}",
+                http_status, raw_body
+            )));
         }
 
-        let status_value = json
+        let json_response: serde_json::Value = serde_json::from_str(&raw_body)
+            .map_err(|err| JitoError::MalformedInvalidResponse(err.to_string()))?;
+
+        if let Some(error_value) = json_response.get("error").filter(|value| !value.is_null()) {
+            let code = error_value
+                .get("code")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(-1);
+            let message = error_value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown JSON-RPC error")
+                .to_string();
+
+            return Err(JitoError::JsonRpcRemoteError { code, message });
+        }
+
+        let status_value = json_response
             .get("result")
             .and_then(|r| r.get("value"))
             .and_then(|v| v.as_array())
-            .ok_or("Missing 'result.value' in response")?
-            .first() // Получаем [0] элемент массива
-            .ok_or("Jito returned an empty 'value' list. Check your Bundle ID format.")?
+            .ok_or_else(|| {
+                JitoError::MalformedInvalidResponse(
+                    "Missing or invalid result.value in Jito response".to_string(),
+                )
+            })?
+            .first()
+            .ok_or_else(|| {
+                JitoError::MalformedInvalidResponse(
+                    "Jito returned an empty result.value list".to_string(),
+                )
+            })?
             .get("status")
-            .ok_or("Missing 'status' field in bundle object")?;
+            .ok_or_else(|| {
+                JitoError::MalformedInvalidResponse(
+                    "Missing status field in Jito bundle response".to_string(),
+                )
+            })?;
 
-        let status_str = status_value
-            .as_str()
-            .ok_or("The 'status' field is not a valid string")?;
+        let status_str = status_value.as_str().ok_or_else(|| {
+            JitoError::MalformedInvalidResponse("Missing result field in Jito response".to_string())
+        })?;
 
-        let status: InflightBundleStatus =
-            serde_json::from_value(serde_json::Value::String(status_str.to_string()))
-                .map_err(|_| format!("Unknown status string from Jito: {}", status_str))?;
+        let status: InflightBundleStatus = serde_json::from_value(serde_json::Value::String(
+            status_str.to_string(),
+        ))
+        .map_err(|_| {
+            JitoError::MalformedInvalidResponse(format!(
+                "Unknown status string from Jito: {}",
+                status_str
+            ))
+        })?;
 
         Ok(status)
     }
@@ -280,23 +388,60 @@ impl JitoClient {
     pub async fn get_bundle_status(
         &self,
         bundle_id: &str,
-    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    ) -> Result<BundleStatusesResponse, JitoError> {
         let request_body = self.build_get_bundle_status_request(bundle_id);
 
         let url = format!("{}/api/v1/getBundleStatuses", self.endpoint);
-        let response = self.client.post(&url).json(&request_body).send().await?;
-        println!("{:?}", response);
-        let response = response.error_for_status()?;
-        println!("{:?}", response);
+        let response = self
+            .client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
 
-        let response_json: serde_json::Value = response.json().await?;
-        println!("{:?}", response_json);
+        let http_status = response.status();
 
-        if let Some(error_value) = response_json.get("error").filter(|value| !value.is_null()) {
-            return Err(format!("Jito JSON-RPC error: {}", error_value).into());
+        println!("HTTP status: {}", http_status);
+
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|err| JitoError::HttpNetworkFailure(err.to_string()))?;
+
+        if !http_status.is_success() {
+            return Err(JitoError::HttpNetworkFailure(format!(
+                "HTTP {}: {}",
+                http_status, raw_body
+            )));
         }
 
-        Ok(response_json)
+        let json_response: serde_json::Value = serde_json::from_str(&raw_body)
+            .map_err(|err| JitoError::MalformedInvalidResponse(err.to_string()))?;
+
+        if let Some(error_value) = json_response.get("error").filter(|value| !value.is_null()) {
+            let code = error_value
+                .get("code")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(-1);
+            let message = error_value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown JSON-RPC error")
+                .to_string();
+
+            return Err(JitoError::JsonRpcRemoteError { code, message });
+        }
+
+        let response: BundleStatusesResponse =
+            serde_json::from_value(json_response).map_err(|err| {
+                JitoError::MalformedInvalidResponse(format!(
+                    "Failed to parse getBundleStatuses response: {}",
+                    err
+                ))
+            })?;
+
+        Ok(response)
     }
 }
 

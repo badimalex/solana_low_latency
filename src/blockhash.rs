@@ -2,6 +2,29 @@ use solana_client::{client_error::ClientError, nonblocking::rpc_client::RpcClien
 use solana_commitment_config::CommitmentConfig;
 use solana_hash::Hash;
 
+#[allow(async_fn_in_trait)]
+pub trait BlockhashSource: Send + Sync {
+    async fn latest(&self) -> Result<BlockhashInfo, ClientError>;
+}
+
+pub struct RpcBlockhashSource {
+    rpc: RpcClient,
+    commitment: CommitmentConfig,
+}
+
+impl RpcBlockhashSource {
+    pub fn new(rpc: RpcClient, commitment: CommitmentConfig) -> Self {
+        Self { rpc, commitment }
+    }
+}
+
+impl BlockhashSource for RpcBlockhashSource {
+    async fn latest(&self) -> Result<BlockhashInfo, ClientError> {
+        let blockhash_info = fetch_latest(&self.rpc, self.commitment).await?;
+        Ok(blockhash_info)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BlockhashInfo {
     pub blockhash: Hash,
