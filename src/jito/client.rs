@@ -473,8 +473,7 @@ mod tests {
 
         let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-        let transaction =
-            build_v0_transaction(&payer, vec![instruction], blockhash, vec![]).unwrap();
+        let transaction = build_v0_transaction(&payer, &[instruction], blockhash, vec![]).unwrap();
 
         let client = JitoClient::new("endpoint");
 
@@ -495,8 +494,7 @@ mod tests {
 
         let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-        let transaction =
-            build_v0_transaction(&payer, vec![instruction], blockhash, vec![]).unwrap();
+        let transaction = build_v0_transaction(&payer, &[instruction], blockhash, vec![]).unwrap();
 
         let client = JitoClient::new("endpoint");
 
@@ -531,9 +529,9 @@ mod tests {
 
         let instruction_b = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-        let tx_a = build_v0_transaction(&payer, vec![instruction_a], blockhash, vec![]).unwrap();
+        let tx_a = build_v0_transaction(&payer, &[instruction_a], blockhash, vec![]).unwrap();
 
-        let tx_b = build_v0_transaction(&payer, vec![instruction_b], blockhash, vec![]).unwrap();
+        let tx_b = build_v0_transaction(&payer, &[instruction_b], blockhash, vec![]).unwrap();
 
         let client = JitoClient::new("endpoint");
 
@@ -578,7 +576,7 @@ mod tests {
         for _ in 0..6 {
             let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-            let tx = build_v0_transaction(&payer, vec![instruction], blockhash, vec![]).unwrap();
+            let tx = build_v0_transaction(&payer, &[instruction], blockhash, vec![]).unwrap();
 
             transactions.push(tx);
         }

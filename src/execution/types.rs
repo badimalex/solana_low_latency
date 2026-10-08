@@ -32,4 +32,9 @@ pub enum ExecutionError {
     ExecutionFailed,
     ConfirmationFailed,
     ConfirmationTimeout,
+    Cancelled,
+    DeadlineExceeded,
+    OutcomeUnknown {
+        signature: solana_keypair::Signature,
+    },
 }

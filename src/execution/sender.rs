@@ -3,12 +3,22 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_keypair::Signature;
 use solana_transaction::versioned::VersionedTransaction;
 
+use super::retry::{RetryClass, SubmissionError};
 use crate::jito::client::JitoClient;
 use crate::jito::error::JitoError;
 
 #[allow(async_fn_in_trait)]
 pub trait RpcSender: Send + Sync {
     async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ClientError>;
+
+    fn classify_error(&self, error: &ClientError) -> SubmissionError {
+        SubmissionError {
+            // Пока безопасный default:
+            // неизвестную ошибку автоматически НЕ retry.
+            class: RetryClass::NonRetryable,
+            message: error.to_string(),
+        }
+    }
 }
 
 pub struct SolanaRpcSender {
@@ -31,7 +41,15 @@ impl RpcSender for SolanaRpcSender {
 #[allow(async_fn_in_trait)]
 pub trait JitoSender: Send + Sync {
     async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, JitoError>;
+
+    fn classify_error(&self, error: &JitoError) -> SubmissionError {
+        SubmissionError {
+            class: RetryClass::NonRetryable,
+            message: error.to_string(),
+        }
+    }
 }
+
 impl JitoSender for JitoClient {
     async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, JitoError> {
         let signature = self.send_transaction(transaction).await?;

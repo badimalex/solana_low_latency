@@ -5,6 +5,8 @@ use solana_hash::Hash;
 #[allow(async_fn_in_trait)]
 pub trait BlockhashSource: Send + Sync {
     async fn latest(&self) -> Result<BlockhashInfo, ClientError>;
+
+    async fn current_block_height(&self) -> Result<u64, ClientError>;
 }
 
 pub struct RpcBlockhashSource {
@@ -22,6 +24,14 @@ impl BlockhashSource for RpcBlockhashSource {
     async fn latest(&self) -> Result<BlockhashInfo, ClientError> {
         let blockhash_info = fetch_latest(&self.rpc, self.commitment).await?;
         Ok(blockhash_info)
+    }
+
+    async fn current_block_height(&self) -> Result<u64, ClientError> {
+        let current_block_height = self
+            .rpc
+            .get_block_height_with_commitment(self.commitment)
+            .await?;
+        Ok(current_block_height)
     }
 }
 

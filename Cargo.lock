@@ -4897,6 +4897,7 @@ dependencies = [
  "solana-system-interface 3.2.0",
  "solana-transaction",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ use solana_transaction::versioned::VersionedTransaction;
 
 pub fn build_v0_transaction(
     payer: &Keypair,
-    instructions: Vec<Instruction>,
+    instructions: &[Instruction],
     recent_blockhash: Hash,
     lookup_tables: Vec<AddressLookupTableAccount>,
 ) -> Result<VersionedTransaction, Box<dyn std::error::Error>> {
@@ -58,8 +58,7 @@ mod tests {
 
         let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-        let transaction =
-            build_v0_transaction(&payer, vec![instruction], blockhash, vec![]).unwrap();
+        let transaction = build_v0_transaction(&payer, &[instruction], blockhash, vec![]).unwrap();
 
         assert!(matches!(transaction.message, VersionedMessage::V0(_)));
 
@@ -75,8 +74,7 @@ mod tests {
 
         let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
-        let transaction =
-            build_v0_transaction(&payer, vec![instruction], blockhash, vec![]).unwrap();
+        let transaction = build_v0_transaction(&payer, &[instruction], blockhash, vec![]).unwrap();
 
         let message = get_v0_message(&transaction);
 
@@ -91,7 +89,7 @@ mod tests {
         let instruction = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
         let transaction =
-            build_v0_transaction(&payer, vec![instruction], Hash::new_unique(), vec![]).unwrap();
+            build_v0_transaction(&payer, &[instruction], Hash::new_unique(), vec![]).unwrap();
 
         let message = get_v0_message(&transaction);
 
@@ -107,7 +105,7 @@ mod tests {
         let ix2 = simple_instruction(Pubkey::new_unique(), Pubkey::new_unique());
 
         let transaction =
-            build_v0_transaction(&payer, vec![ix1, ix2], Hash::new_unique(), vec![]).unwrap();
+            build_v0_transaction(&payer, &[ix1, ix2], Hash::new_unique(), vec![]).unwrap();
 
         let message = get_v0_message(&transaction);
 
@@ -129,7 +127,7 @@ mod tests {
 
         let transaction = build_v0_transaction(
             &payer,
-            vec![instruction],
+            &[instruction],
             Hash::new_unique(),
             vec![lookup_table],
         )
@@ -151,9 +149,9 @@ mod tests {
         let blockhash = Hash::new_unique();
 
         let instruction = simple_instruction(program_id, account_a);
+        let instructions = &[instruction];
 
-        let without_alt =
-            build_v0_transaction(&payer, vec![instruction.clone()], blockhash, vec![]).unwrap();
+        let without_alt = build_v0_transaction(&payer, instructions, blockhash, vec![]).unwrap();
 
         let lookup_table = AddressLookupTableAccount {
             key: Pubkey::new_unique(),
@@ -161,7 +159,7 @@ mod tests {
         };
 
         let with_alt =
-            build_v0_transaction(&payer, vec![instruction], blockhash, vec![lookup_table]).unwrap();
+            build_v0_transaction(&payer, instructions, blockhash, vec![lookup_table]).unwrap();
 
         let without_alt_message = get_v0_message(&without_alt);
         let with_alt_message = get_v0_message(&with_alt);
