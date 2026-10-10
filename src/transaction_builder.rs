@@ -10,7 +10,7 @@ pub fn build_v0_transaction(
     instructions: &[Instruction],
     recent_blockhash: Hash,
     lookup_tables: Vec<AddressLookupTableAccount>,
-) -> Result<VersionedTransaction, Box<dyn std::error::Error>> {
+) -> Result<VersionedTransaction, Box<dyn std::error::Error + Send + Sync>> {
     let message_v0 = MessageV0::try_compile(
         &payer.pubkey(),
         &instructions,

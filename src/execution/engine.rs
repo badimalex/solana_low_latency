@@ -1,12 +1,11 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use solana_client::rpc_client::SerializableTransaction;
 use solana_keypair::Signature;
 
 use crate::{
     blockhash::BlockhashSource,
     confirmation::{ConfirmationError, ConfirmationTracker, SignatureStatusProvider},
-    execution::retry::{RetryClass, RetryPolicy, SubmissionError},
+    execution::retry::{RetryClass, RetryPolicy},
     transaction_builder,
 };
 
@@ -59,15 +58,29 @@ where
         }
     }
 
+    #[tracing::instrument(skip_all, fields(route = ?request.route))]
     pub async fn execute(
         &self,
         request: ExecutionRequest,
     ) -> Result<ExecutionOutcome, ExecutionError> {
+        let route = match request.route {
+            ExecutionRoute::SolanaRpc => "rpc",
+            ExecutionRoute::Jito => "jito",
+        };
+
+        metrics::counter!(
+            "execution_started_total",
+            "route" => route
+        )
+        .increment(1);
+
+        let started_at = Instant::now();
+        tracing::info!("execution_started");
         let mut submitted_signature: Option<Signature> = None;
 
-        match tokio::time::timeout(
+        let result = match tokio::time::timeout(
             self.operation_timeout,
-            self.execute_inner(request, &mut submitted_signature),
+            self.execute_inner(request, &mut submitted_signature, route),
         )
         .await
         {
@@ -76,37 +89,131 @@ where
                 Some(signature) => Err(ExecutionError::OutcomeUnknown { signature }),
                 None => Err(ExecutionError::DeadlineExceeded),
             },
+        };
+
+        match &result {
+            Ok(_) => {
+                tracing::info!("execution_success");
+            }
+
+            Err(ExecutionError::OutcomeUnknown { signature: _ }) => {
+                tracing::warn!("execution_unknown");
+            }
+
+            Err(ExecutionError::Cancelled) => {
+                tracing::warn!("execution_cancelled");
+            }
+
+            Err(ExecutionError::ConfirmationTimeout | ExecutionError::DeadlineExceeded) => {
+                tracing::warn!("execution_timeout");
+            }
+
+            Err(_) => {
+                tracing::error!("execution_failed");
+            }
         }
+
+        let outcome = match &result {
+            Ok(_) => "success",
+            Err(ExecutionError::OutcomeUnknown { signature: _ }) => "unknown",
+            Err(ExecutionError::Cancelled) => "cancelled",
+            Err(ExecutionError::ConfirmationTimeout | ExecutionError::DeadlineExceeded) => {
+                "timeout"
+            }
+            Err(_) => "failure",
+        };
+
+        metrics::counter!(
+            "execution_finished_total",
+            "route" => route,
+            "outcome" => outcome
+        )
+        .increment(1);
+
+        let duration_seconds = started_at.elapsed().as_secs_f64();
+
+        tracing::info!(duration_seconds, "execution_finished");
+
+        metrics::histogram!(
+            "execution_duration_seconds",
+            "route" => route
+        )
+        .record(duration_seconds);
+
+        result
     }
 
     async fn execute_inner(
         &self,
         request: ExecutionRequest,
         submitted_signature: &mut Option<Signature>,
+        route: &'static str,
     ) -> Result<ExecutionOutcome, ExecutionError> {
         if self.cancellation_token.is_cancelled() {
             return Err(ExecutionError::Cancelled);
         }
-        let mut blockhash_info = self
-            .blockhash_source
-            .latest()
-            .await
-            .map_err(|_| ExecutionError::PreparationFailed)?;
+        let started = Instant::now();
+
+        let fetch_result = self.blockhash_source.latest().await;
+
+        tracing::info!(
+            duration_seconds = started.elapsed().as_secs_f64(),
+            success = fetch_result.is_ok(),
+            "blockhash_fetch_finished"
+        );
+
+        metrics::histogram!(
+            "blockhash_fetch_duration_seconds",
+            "route" => route
+        )
+        .record(started.elapsed().as_secs_f64());
+        let mut blockhash_info = fetch_result.map_err(|_| ExecutionError::PreparationFailed)?;
 
         let instructions = request.instructions;
-        let mut transaction = transaction_builder::build_v0_transaction(
+
+        let started = Instant::now();
+
+        let build_result = transaction_builder::build_v0_transaction(
             &request.payer,
             &instructions,
             blockhash_info.blockhash,
             vec![],
+        );
+
+        tracing::info!(
+            duration_seconds = started.elapsed().as_secs_f64(),
+            success = build_result.is_ok(),
+            "transaction_build_finished"
+        );
+
+        metrics::histogram!(
+            "transaction_build_duration_seconds",
+            "route" => route
         )
-        .map_err(|_| ExecutionError::PreparationFailed)?;
+        .record(started.elapsed().as_secs_f64());
+        let mut transaction = build_result.map_err(|_| ExecutionError::PreparationFailed)?;
 
         let mut attempt = 1;
 
         let signature = loop {
-            let signature_copy = transaction.signatures[0];
-            *submitted_signature = Some(signature_copy.clone());
+            metrics::counter!(
+                "submission_attempts_total",
+                "route" => route
+            )
+            .increment(1);
+
+            if attempt > 1 {
+                metrics::counter!(
+                    "retry_attempts_total",
+                    "route" => route
+                )
+                .increment(1);
+            }
+
+            tracing::info!(attempt, "submission_started");
+
+            *submitted_signature = Some(transaction.signatures[0]);
+            let submission_started = Instant::now();
 
             let submission = match &request.route {
                 ExecutionRoute::SolanaRpc => self
@@ -121,6 +228,35 @@ where
                     .await
                     .map_err(|error| self.jito_sender.classify_error(&error)),
             };
+
+            tracing::info!(
+                duration_seconds = submission_started.elapsed().as_secs_f64(),
+                success = submission.is_ok(),
+                "submission_fetch_finished"
+            );
+
+            metrics::histogram!(
+                "submission_duration_seconds",
+                "route" => route
+            )
+            .record(submission_started.elapsed().as_secs_f64());
+            match &submission {
+                Ok(_) => {
+                    tracing::info!(attempt, "sender_returned_ok");
+                }
+                Err(error) => {
+                    metrics::counter!(
+                        "submission_errors_total",
+                        "route" => route
+                    )
+                    .increment(1);
+                    tracing::warn!(
+                        attempt,
+                        retry_class = ?error.class,
+                        "submission_error"
+                    );
+                }
+            }
 
             match submission {
                 Ok(signature) => break signature,
@@ -137,19 +273,49 @@ where
                             .map_err(|_| ExecutionError::PreparationFailed)?;
 
                         if current_block_height > blockhash_info.last_valid_block_height {
-                            blockhash_info = self
-                                .blockhash_source
-                                .latest()
-                                .await
-                                .map_err(|_| ExecutionError::PreparationFailed)?;
+                            let started = Instant::now();
+                            let fetch_result = self.blockhash_source.latest().await;
 
-                            transaction = transaction_builder::build_v0_transaction(
+                            tracing::info!(
+                                attempt,
+                                reason = "rebuild",
+                                duration_seconds = started.elapsed().as_secs_f64(),
+                                success = fetch_result.is_ok(),
+                                "blockhash_fetch_finished"
+                            );
+                            metrics::histogram!(
+                                "blockhash_fetch_duration_seconds",
+                                "route" => route
+                            )
+                            .record(started.elapsed().as_secs_f64());
+
+                            blockhash_info =
+                                fetch_result.map_err(|_| ExecutionError::PreparationFailed)?;
+
+                            let started = Instant::now();
+
+                            let build_result = transaction_builder::build_v0_transaction(
                                 &request.payer,
                                 &instructions,
                                 blockhash_info.blockhash,
                                 vec![],
+                            );
+
+                            tracing::info!(
+                                attempt,
+                                reason = "rebuild",
+                                duration_seconds = started.elapsed().as_secs_f64(),
+                                success = build_result.is_ok(),
+                                "transaction_build_finished"
+                            );
+
+                            metrics::histogram!(
+                                "transaction_build_duration_seconds",
+                                "route" => route
                             )
-                            .map_err(|_| ExecutionError::PreparationFailed)?;
+                            .record(started.elapsed().as_secs_f64());
+                            transaction =
+                                build_result.map_err(|_| ExecutionError::PreparationFailed)?;
                         }
                     }
                     RetryClass::NonRetryable => {
@@ -170,10 +336,24 @@ where
             }
         };
 
+        tracing::info!("confirmation_started");
+        let confirmation_started_at = Instant::now();
         let confirmation = self
             .confirmation_tracker
             .wait_until_confirmed(&signature, self.confirmation_timeout)
             .await;
+
+        tracing::info!(
+            duration_seconds = confirmation_started_at.elapsed().as_secs_f64(),
+            success = confirmation.is_ok(),
+            "confirmation_finished"
+        );
+
+        metrics::histogram!(
+            "confirmation_duration_seconds",
+            "route" => route
+        )
+        .record(confirmation_started_at.elapsed().as_secs_f64());
 
         let confirmation = match confirmation {
             Ok(status) => status,
@@ -191,6 +371,7 @@ where
             }
         };
 
+        tracing::info!("confirmation_completed");
         Ok(ExecutionOutcome {
             signature,
             confirmation,
@@ -206,6 +387,7 @@ mod tests {
     };
     use std::time::Duration;
 
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     use solana_client::client_error::ClientError;
     use solana_hash::Hash;
     use solana_keypair::{Keypair, Signature};
@@ -276,6 +458,10 @@ mod tests {
             Duration::from_secs(30),
         );
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let request = ExecutionRequest {
             instructions: vec![test_instruction()],
             payer: Keypair::new(),
@@ -286,6 +472,26 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(rpc_calls.load(Ordering::Relaxed), 2);
+
+        let recorded = snapshotter.snapshot().into_vec();
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "submission_attempts_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "route" && l.value() == "rpc")
+                && matches!(value, DebugValue::Counter(2))
+        }));
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "retry_attempts_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "route" && l.value() == "rpc")
+                && matches!(value, DebugValue::Counter(1))
+        }));
     }
 
     struct AlwaysRetryableRpcSender {
@@ -627,6 +833,10 @@ mod tests {
             Duration::from_secs(30),
         );
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let request = ExecutionRequest {
             instructions: vec![test_instruction()],
             payer: Keypair::new(),
@@ -635,15 +845,25 @@ mod tests {
         };
 
         let result = engine.execute(request).await;
+        let recorded = snapshotter.snapshot().into_vec();
 
         assert!(result.is_ok());
 
         assert_eq!(rpc_calls.load(Ordering::Relaxed), 0);
 
         assert_eq!(jito_calls.load(Ordering::Relaxed), 1);
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "submission_attempts_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "route" && l.value() == "jito")
+                && matches!(value, DebugValue::Counter(1))
+        }));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn successful_submission_is_confirmed() {
         let rpc_calls = Arc::new(AtomicUsize::new(0));
         let jito_calls = Arc::new(AtomicUsize::new(0));
@@ -669,15 +889,45 @@ mod tests {
             route: ExecutionRoute::SolanaRpc,
         };
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
+        let subscriber = tracing_subscriber::fmt().with_test_writer().finish();
+
+        let _tracing_guard = tracing::subscriber::set_default(subscriber);
+
         let outcome = engine
             .execute(request)
             .await
             .expect("execution should succeed");
 
+        let recorded = snapshotter.snapshot().into_vec();
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_duration_seconds"
+                && matches!(value, DebugValue::Histogram(values) if !values.is_empty())
+        }));
         assert!(matches!(
             outcome.confirmation,
             ConfirmationStatus::Confirmed
         ));
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "success")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().any(|(key, _, _, _)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "route" && l.value() == "rpc")
+        }));
     }
 
     struct FakeFinalizedStatusProvider;
@@ -755,7 +1005,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn submission_error_does_not_start_confirmation() {
         let confirmation_calls = Arc::new(AtomicUsize::new(0));
 
@@ -780,6 +1030,10 @@ mod tests {
             route: ExecutionRoute::SolanaRpc,
         };
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let result = engine.execute(request).await;
 
         assert!(
@@ -789,6 +1043,25 @@ mod tests {
         );
 
         assert_eq!(confirmation_calls.load(Ordering::Relaxed), 0);
+
+        let recorded = snapshotter.snapshot().into_vec();
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "failure")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().all(|(key, _, _, _)| {
+            !(key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "success"))
+        }));
     }
 
     #[tokio::test]
@@ -975,13 +1248,35 @@ mod tests {
             route: ExecutionRoute::SolanaRpc,
         };
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let result = engine.execute(request).await;
+        let recorded = snapshotter.snapshot().into_vec();
 
         assert!(
             matches!(result, Err(ExecutionError::ExecutionFailed)),
             "Ожидалась ошибка InvalidData, но получено: {:?}",
             result
         );
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "failure")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().all(|(key, _, _, _)| {
+            !(key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "success"))
+        }));
     }
 
     struct NeverConfirmedProvider;
@@ -1013,6 +1308,10 @@ mod tests {
             Duration::from_secs(30),
         );
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let request = ExecutionRequest {
             instructions: vec![test_instruction()],
             payer: Keypair::new(),
@@ -1026,6 +1325,25 @@ mod tests {
             "Ожидалась ошибка InvalidData, но получено: {:?}",
             result
         );
+
+        let recorded = snapshotter.snapshot().into_vec();
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "timeout")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().all(|(key, _, _, _)| {
+            !(key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "success"))
+        }));
     }
 
     struct CountingBlockhashSource {
@@ -1099,6 +1417,10 @@ mod tests {
             Duration::from_secs(30),
         );
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let request = ExecutionRequest {
             instructions: vec![test_instruction()],
             payer: Keypair::new(),
@@ -1107,9 +1429,28 @@ mod tests {
 
         let result = engine.execute(request).await;
 
+        let recorded = snapshotter.snapshot().into_vec();
+
         assert!(matches!(result, Err(ExecutionError::Cancelled)));
 
         assert_eq!(rpc_calls.load(Ordering::Relaxed), 0);
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "cancelled")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().all(|(key, _, _, _)| {
+            !(key.key().name() == "submission_attempts_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "route" && l.value() == "rpc"))
+        }));
     }
 
     #[tokio::test]
@@ -1233,7 +1574,13 @@ mod tests {
             route: ExecutionRoute::SolanaRpc,
         };
 
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+
         let result = engine.execute(request).await;
+
+        let recorded = snapshotter.snapshot().into_vec();
 
         match result {
             Err(ExecutionError::OutcomeUnknown { signature }) => {
@@ -1244,6 +1591,23 @@ mod tests {
         }
 
         assert_eq!(rpc_calls.load(Ordering::Relaxed), 1);
+
+        assert!(recorded.iter().any(|(key, _, _, value)| {
+            key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "unknown")
+                && matches!(value, DebugValue::Counter(1))
+        }));
+
+        assert!(recorded.iter().all(|(key, _, _, _)| {
+            !(key.key().name() == "execution_finished_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|l| l.key() == "outcome" && l.value() == "success"))
+        }));
     }
 
     struct HangingBlockhashSource;
