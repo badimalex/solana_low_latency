@@ -87,7 +87,7 @@ impl RetryPolicy {
                 return self.max_delay;
             }
 
-            res = res * 2;
+            res *= 2;
         }
 
         res

@@ -36,6 +36,7 @@ where
     J: JitoSender,
     P: SignatureStatusProvider,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         blockhash_source: B,
         rpc_sender: R,
@@ -399,7 +400,7 @@ mod tests {
     use crate::{
         blockhash::{BlockhashInfo, BlockhashSource},
         confirmation::{
-            ConfirmationStatus::{self, Confirmed},
+            ConfirmationStatus::{self},
             ConfirmationTracker, SignatureStatusProvider,
         },
         execution::retry::{RetryClass, RetryPolicy, SubmissionError},

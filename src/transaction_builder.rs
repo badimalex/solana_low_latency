@@ -13,7 +13,7 @@ pub fn build_v0_transaction(
 ) -> Result<VersionedTransaction, Box<dyn std::error::Error + Send + Sync>> {
     let message_v0 = MessageV0::try_compile(
         &payer.pubkey(),
-        &instructions,
+        instructions,
         &lookup_tables,
         recent_blockhash,
     )?;

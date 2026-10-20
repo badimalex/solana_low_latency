@@ -144,8 +144,14 @@ mod tests {
         let actual = budget.to_instructions();
 
         // 3. Создаем ожидаемые инструкции с помощью официального SDK
-        let expected_limit_instruction = solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit);
-        let expected_price_instruction = solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price_micro_lamports);
+        let expected_limit_instruction =
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
+                compute_unit_limit,
+            );
+        let expected_price_instruction =
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_price(
+                compute_unit_price_micro_lamports,
+            );
 
         // 4. Проверяем, что полученные инструкции полностью совпадают с ожидаемыми
         assert_eq!(

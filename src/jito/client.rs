@@ -1,10 +1,5 @@
 use base64::{Engine, prelude::BASE64_STANDARD};
 
-use solana_hash::Hash;
-use solana_keypair::{Keypair, Signer};
-use solana_message::{
-    AddressLookupTableAccount, Instruction, VersionedMessage, v0::Message as MessageV0,
-};
 use solana_pubkey::Pubkey;
 use solana_transaction::versioned::VersionedTransaction;
 
@@ -451,7 +446,10 @@ mod tests {
     use super::*;
     use crate::transaction_builder::build_v0_transaction;
 
+    use solana_hash::Hash;
+    use solana_keypair::Keypair;
     use solana_message::AccountMeta;
+    use solana_message::Instruction;
     use solana_pubkey::Pubkey;
 
     fn simple_instruction(program_id: Pubkey, account: Pubkey) -> Instruction {

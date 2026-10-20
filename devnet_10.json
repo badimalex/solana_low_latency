@@ -1,0 +1,92 @@
+[
+  {
+    "operation_index": 0,
+    "timestamp": 1792514683195,
+    "route": "SolanaRpc",
+    "signature": "2xfLxccdtrGvvjkJFRELsT55GS4jz3A7da82LcoDzpJ3CsQjCkHmRbzrJuYvsTiDr8EA9uuzQoWhEbbs3yepYxs9",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1790.613266,
+    "error": null
+  },
+  {
+    "operation_index": 1,
+    "timestamp": 1792514685988,
+    "route": "SolanaRpc",
+    "signature": "44oYKvRvKaoWCj9NKgH2RhLTRk1FuAVSQPqth1kwzxnn5EYaTVkhYj7rn7pawBT8wTBk3VaKV92cNTUePg9HRpqH",
+    "confirmation_status": "Finalized",
+    "latency_ms": 3596.873892,
+    "error": null
+  },
+  {
+    "operation_index": 2,
+    "timestamp": 1792514690587,
+    "route": "SolanaRpc",
+    "signature": "3FjMYjWcgNWrM34UKxgGrAM8r8rDi5Qrd9dePwpqNAf2VmqfkEsV7mT7jBYYKBRDyKNvCuHNhdpjUZQuexjqTCqH",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1655.685137,
+    "error": null
+  },
+  {
+    "operation_index": 3,
+    "timestamp": 1792514693244,
+    "route": "SolanaRpc",
+    "signature": "3drBzgfngykygHoHgbmXyy6tzpKzqK4exKwfKT3YWiePYkKUb5aHtoRTBEZgWBuqkzPNLZKkaxeF8v7MVGdsGBgD",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1680.965574,
+    "error": null
+  },
+  {
+    "operation_index": 4,
+    "timestamp": 1792514695927,
+    "route": "SolanaRpc",
+    "signature": "21wwG8kUHJFZZEsncEtZZd5KC4uyoerYXWNJS5bXnA5FQVPJq9y7aFY6HhcWzbEpBKpHcmaGQHzLEAoCkGHY6n8Z",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1188.208755,
+    "error": null
+  },
+  {
+    "operation_index": 5,
+    "timestamp": 1792514698116,
+    "route": "SolanaRpc",
+    "signature": "52VqnBHNvcnjjU65LBx5d5Micu49XcGqfhQp6DUrPjXcMNtkzqg2LazivMc8A1bXUu86ShWizg2HehdaVr8vvPy7",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1350.933946,
+    "error": null
+  },
+  {
+    "operation_index": 6,
+    "timestamp": 1792514700470,
+    "route": "SolanaRpc",
+    "signature": "4nCCBgP1qrgKoQx7i8pQRgWz7Mrf7CroDfvLCYaR6sUSTFdqNbzsMPRKqKw4tmxeNiYjCiQVyHGgrRrpc4RyhgCG",
+    "confirmation_status": "Finalized",
+    "latency_ms": 2092.5080089999997,
+    "error": null
+  },
+  {
+    "operation_index": 7,
+    "timestamp": 1792514703564,
+    "route": "SolanaRpc",
+    "signature": "PiXhA9DCwabY6JwrbXmmSPktX638NVE8pyq7b79Szz2XPkF1FJ68y8QUdHyQhDxchkYivbuGVHwa2gzbjJ5Rxmq",
+    "confirmation_status": "Finalized",
+    "latency_ms": 2471.193084,
+    "error": null
+  },
+  {
+    "operation_index": 8,
+    "timestamp": 1792514707038,
+    "route": "SolanaRpc",
+    "signature": "4dQuc54XDsoMu1RAmzQf72jdsJMyMb3Ken6EGGy6AjvXZc3SzrpqxREd9grDntcZRdTmJzWnpfxBfiUVoFCCousb",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1573.438437,
+    "error": null
+  },
+  {
+    "operation_index": 9,
+    "timestamp": 1792514709613,
+    "route": "SolanaRpc",
+    "signature": "3mmCecAjwrFKFBVbyJjxMyCWHqJPRWx7bzHPvCGFgbX3mbCq1UNPPBYYFwL6aPMwfLe2iismnb96NQnF9K18bzbE",
+    "confirmation_status": "Finalized",
+    "latency_ms": 1817.5198859999998,
+    "error": null
+  }
+]

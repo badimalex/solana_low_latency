@@ -110,7 +110,12 @@ impl<P: SignatureStatusProvider> ConfirmationTracker<P> {
 
         tokio::time::timeout(timeout, async {
             loop {
-                match self.provider.get_status(signature).await {
+                let started = std::time::Instant::now();
+                let result = self.provider.get_status(signature).await;
+
+                println!("get_status took: {:?}", started.elapsed());
+
+                match result {
                     Err(error) => {
                         return Err(ConfirmationError::Rpc(error));
                     }
